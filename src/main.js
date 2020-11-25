@@ -34,7 +34,7 @@ async function start(orders) {
     queue++;
   }
 
-  let ins = await insertOrder(data);
+  // let ins = await insertOrder(data);
 }
 
 async function cal(orders) {
@@ -62,7 +62,10 @@ async function cal(orders) {
     let task = tasks[i];
 
     let needStart = orderDate;
-    let available = await getStartTimeByCheckAvailableStation(task.work_station_id, needStart);
+    let available = await getStartTimeByCheckAvailableStation(
+      task.work_station_id, 
+      needStart
+    );
     // "2020-11-25T08:29:47.417Z"
     // --> res = time to start task after check work station
 
@@ -99,8 +102,10 @@ async function cal(orders) {
       let lastTime = endTime;
       for (let s = 0; s < subTasks.length; s++) {
         let sTask = subTasks[s];
-        let subTaskStart = datetime.moment(lastTime.format(fullFormat)).add(1, 'minutes');
-        let subTaskEnd = datetime.moment(subTaskStart.format(fullFormat)).add(+sTask.cooking_time, 'minutes');
+        let subTaskStart = datetime.moment(
+          lastTime.format(fullFormat)).add(1, 'minutes');
+        let subTaskEnd = datetime.moment(
+          subTaskStart.format(fullFormat)).add(+sTask.cooking_time, 'minutes');
         let subTask = {
           ref_id: ref_id,
           expected_start_at: subTaskStart.format(fullFormat),
@@ -277,7 +282,8 @@ async function getStartTimeByCheckAvailableStation(stationId, needStart) {
   }
 
   // get work station info
-  let sql = `SELECT * FROM rimna_db.work_stations WHERE work_station_id = '${stationId}' ORDER BY work_station_id;`;
+  let sql = `SELECT * FROM rimna_db.work_stations 
+  WHERE work_station_id = '${stationId}' ORDER BY work_station_id;`;
   let resWork = await db.query(sql);
   if (resWork.length == 0) {
     return datetime.moment(needStart).add(1, 'minutes');
