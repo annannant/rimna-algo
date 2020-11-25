@@ -1,9 +1,5 @@
+//start(orders); 
 [
-  {
-    "menu_id": 14,
-    "menu_name": "ยำวุ้นเส้น",
-    "qty": 1
-  },
   {
     "menu_id": 18,
     "menu_name": "เฟรนฟราย",

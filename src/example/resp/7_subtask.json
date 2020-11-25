@@ -1,0 +1,17 @@
+[
+  {
+    "menu_id": 18,
+    "name": "เฟรนฟราย",
+    "max_cooking_same_time": 3,
+    "menu_type": "appetizer",
+    "is_extra_menu": 0,
+    "reorder_point": null,
+    "default_reorder_qty": null,
+    "menu_name": "เฟรนฟราย",
+    "task_id": 21,
+    "task_type": "dress",
+    "cooking_time": 2,
+    "work_station_id": null,
+    "sequence": 2
+  }
+]

@@ -34,7 +34,7 @@ async function start(orders) {
     queue++;
   }
 
-  // let ins = await insertOrder(data);
+  let ins = await insertOrder(data);
 }
 
 async function cal(orders) {
@@ -45,6 +45,7 @@ async function cal(orders) {
 
   // ตรวจสอบ ว่าแต่ละ menu มี extra task และต้อง reorder point หรือไม่?
   let extraTask = await checkExtraTask(orders);
+// console.log('extraTask', extraTask);
   orders = orders.concat(extraTask);
 
   // max_cooking, cooking_time, work_station_id เฉพาะ main task - sequence 1
@@ -62,6 +63,7 @@ async function cal(orders) {
 
     let needStart = orderDate;
     let available = await getStartTimeByCheckAvailableStation(task.work_station_id, needStart);
+    // "2020-11-25T08:29:47.417Z"
     // --> res = time to start task after check work station
 
     let taskStart = available;
@@ -147,16 +149,16 @@ async function selectChief(task, start, temp) {
 
   let vacant = [];
   let chiefs = await totalChief();
-  let res = temp;
-  // let res = await getOrderItemInQueue(temp);
-  // console.log('res', JSON.stringify(res));
+  let allTasks = temp;
+  // let allTasks = await getOrderItemInQueue(temp);
+  // console.log('allTasks', JSON.stringify(allTasks));
 
   for (let i = 0; i < chiefs.length; i++) {
     let chief = chiefs[i];
     // find all chief's task
 
     // no task in hand
-    let chiefTasks = res.filter((r) => r.user_id == chief.user_id);
+    let chiefTasks = allTasks.filter((r) => r.user_id == chief.user_id);
     if (chiefTasks.length == 0) {
       // TODO return this chief;
       return {

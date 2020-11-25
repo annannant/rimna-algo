@@ -1,0 +1,50 @@
+[
+  {
+    "menu_id": 18,
+    "name": "เฟรนฟราย",
+    "max_cooking_same_time": 3,
+    "menu_type": "appetizer",
+    "is_extra_menu": 0,
+    "reorder_point": null,
+    "default_reorder_qty": null,
+    "task_id": 20,
+    "task_type": "fries",
+    "cooking_time": 3,
+    "work_station_id": 1,
+    "sequence": 1,
+    "menu_name": "เฟรนฟราย",
+    "qty": 2
+  },
+  {
+    "menu_id": 1,
+    "name": "ข้าวหมูย่างน้ำจิ้มแจ่ว",
+    "max_cooking_same_time": 1,
+    "menu_type": "main",
+    "is_extra_menu": 0,
+    "reorder_point": null,
+    "default_reorder_qty": null,
+    "task_id": 1,
+    "task_type": "cook",
+    "cooking_time": 3,
+    "work_station_id": null,
+    "sequence": 1,
+    "menu_name": "ข้าวหมูย่างน้ำจิ้มแจ่ว",
+    "qty": 1
+  },
+  {
+    "menu_id": 19,
+    "name": "หมูย่าง",
+    "max_cooking_same_time": 5,
+    "menu_type": "",
+    "is_extra_menu": 1,
+    "reorder_point": 3,
+    "default_reorder_qty": 5,
+    "task_id": 22,
+    "task_type": "grills",
+    "cooking_time": 30,
+    "work_station_id": 2,
+    "sequence": 1,
+    "qty": 5,
+    "menu_name": "หมูย่าง"
+  }
+]
