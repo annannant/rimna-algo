@@ -33,13 +33,13 @@ async function start(orders) {
     data[i].queue_number = queue;
     queue++;
   }
-
   // let ins = await insertOrder(data);
 }
 
 async function cal(orders) {
   let orderDate = datetime.moment();
 
+  // ไว้สำหรับเก็บรายการ ที่ calcualte แล้ว
   // ดึงรายการออเดอร์ที่อยู่ในคิว
   let temp = await getOrderItemInQueue();
 
@@ -48,6 +48,7 @@ async function cal(orders) {
 // console.log('extraTask', extraTask);
   orders = orders.concat(extraTask);
 
+  // ดึงขอมูล task ของรายการที่สั่งเข้ามา
   // max_cooking, cooking_time, work_station_id เฉพาะ main task - sequence 1
   let tasks = await getMenuInfoMainTask(orders);
 
@@ -62,6 +63,7 @@ async function cal(orders) {
     let task = tasks[i];
 
     let needStart = orderDate;
+    // check work station
     let available = await getStartTimeByCheckAvailableStation(
       task.work_station_id, 
       needStart
@@ -71,6 +73,8 @@ async function cal(orders) {
 
     let taskStart = available;
     
+    // หาแม่ครัวที่ทำงานเสร็จเร็วที่สุด เพื่อลองคำนวณเวลา
+    // หารายการ gap ที่แม่ครัวว่าง ดูจากเวลาสิ้นสุดของแต่ละ task และเวลาเริ่มต้นของ task ถัดไป
     let chief = await selectChief(task, taskStart, temp);
     // --> res = time to start task after check work station
 
@@ -99,13 +103,13 @@ async function cal(orders) {
       // ADD SUB TASK
       // เช่น จัดจานเฟรนฟราย, จัดจานไก่ทอด
       let subTasks = await getSubTask(task.menu_id);
+
+       // เวลาที่เสร็จของ task หลัก
       let lastTime = endTime;
       for (let s = 0; s < subTasks.length; s++) {
         let sTask = subTasks[s];
-        let subTaskStart = datetime.moment(
-          lastTime.format(fullFormat)).add(1, 'minutes');
-        let subTaskEnd = datetime.moment(
-          subTaskStart.format(fullFormat)).add(+sTask.cooking_time, 'minutes');
+        let subTaskStart = datetime.moment(lastTime.format(fullFormat)).add(1, 'minutes');
+        let subTaskEnd = datetime.moment(subTaskStart.format(fullFormat)).add(+sTask.cooking_time, 'minutes');
         let subTask = {
           ref_id: ref_id,
           expected_start_at: subTaskStart.format(fullFormat),
@@ -149,21 +153,20 @@ async function cal(orders) {
 }
 
 async function selectChief(task, start, temp) {
-  console.log('----->task', task.name, task.task_type, task.cooking_time, start.format(fullFormat));
-  // // console.log('task', task);
-
   let vacant = [];
+  // ดึงข้อมูลแม่ครัว
   let chiefs = await totalChief();
   let allTasks = temp;
-  // let allTasks = await getOrderItemInQueue(temp);
-  // console.log('allTasks', JSON.stringify(allTasks));
 
+  // วน loop ตามจำนวนของ แม่ครัว
   for (let i = 0; i < chiefs.length; i++) {
     let chief = chiefs[i];
     // find all chief's task
 
-    // no task in hand
+    // filter เฉพาะงานของ แม่ครัวคนนั้น
     let chiefTasks = allTasks.filter((r) => r.user_id == chief.user_id);
+    // no task in hand
+    // ถ้าเค้าว่าง
     if (chiefTasks.length == 0) {
       // TODO return this chief;
       return {
@@ -173,26 +176,31 @@ async function selectChief(task, start, temp) {
       // continue;
     }
 
+    // วนลูปแต่ละ task เพื่อหา gap ที่เค้าว่าง
     for (let j = 0; j < chiefTasks.length; j++) {
       let current = chiefTasks[j];
       // console.log('current', current.menu_name, current.task_type, current.children.length);
       let cTaskStart = new moment(current.expected_start_at);
       let ctask = new moment(current.expected_end_at).add(1, 'minutes');
+
       // สามารถทำพร้อมฉันได้นะ ฉันเป็นของทอดหรือย่าง - provide start time
-      // console.log('current.task_type', current.task_type);
       if (['fries', 'grill'].includes(current.task_type)) {
-        // console.log('current.children', current.children);
+        // มี task อื่นที่ทำพร้อมอยู่
         if ((current.children || []).length > 0) {
+          // วนลูป task ที่ทำพร้อมกันอยู่ ว่ามี gap ว่างมั้ย 
           for (let c = 0; c < current.children.length; c++) {
             let child = current.children[c];
             let childCtask = new moment(child.expected_end_at).add(1, 'minutes');
             let noNextChild = c + 1 == current.children.length;
             if (noNextChild) {
+              // ใช้เวลาที่สิ้นสุดของตัวลูก เป็น start
+              // ใช้เวลาที่สิ้นสุดของตัวแม่ เป็น end
+              // ทอดไก่   12:21	12:36
+              // ยำวุ้นเส้น 12:21	12:26
+              // มี gap ว่างอยู่ 10 นาที
               let c_ntask = new moment(current.expected_end_at);
               let c_duration = new moment.duration(c_ntask.diff(childCtask));
-              // console.log('noNextChild', noNextChild, current.ref_id, c_duration.minutes());
               vacant.push({
-                // main_order_item_id: current.order_item_id,
                 ref_id: current.ref_id,
                 plus_time: CONF_PLUS_EXTRA_TIME,
                 user_id: chief.user_id,
@@ -203,8 +211,9 @@ async function selectChief(task, start, temp) {
             }
           }
         } else {
+          // ไม่มี task อื่นทำพร้อมกัน
+          // เวลาเริ่ม = เริ่มได้พร้อมของทอด
           vacant.push({
-            // main_order_item_id: current.order_item_id,
             ref_id: current.ref_id,
             plus_time: CONF_PLUS_EXTRA_TIME,
             user_id: chief.user_id,
@@ -216,6 +225,7 @@ async function selectChief(task, start, temp) {
         // เวลา ถัดไป แบบว่าง ๆ ไม่มี task อื่นมาคั่น
         let noNextTask = j + 1 == chiefTasks.length;
         if (noNextTask) {
+          // เวลาเริ่ม = เวลาสิ้นสุดของ task นี้
           vacant.push({
             user_id: chief.user_id,
             start: ctask.format(fullFormat),
@@ -227,6 +237,8 @@ async function selectChief(task, start, temp) {
         let next = chiefTasks[j + 1];
 
         // duration between task
+        // เอาเวลาสิ้นสุดของ task นี้ = กับเวลาเริ่มของ task ถัดไป มัน diff กัน
+        // แล้วใส่เปน duration
         let ntask = new moment(next.expected_start_at);
         let duration = moment.duration(ctask.diff(ntask));
         if (duration > 1) {
@@ -243,7 +255,8 @@ async function selectChief(task, start, temp) {
 
   // console.log('vacant', JSON.stringify(vacant));
   // console.log('-----------------', start.format(fullFormat));
-
+  
+  // prepare เวลาสิ้นสุด = เอาเวลาเริ่ม + cooking time + (extra_time) ถ้ามี
   let sel = vacant
     .filter((v) => v.duration >= task.cooking_time + (v.plus_time || 0))
     .map((v) => {
@@ -254,7 +267,7 @@ async function selectChief(task, start, temp) {
         .format(fullFormat);
       return v;
     });
-  // sel = _.orderBy(sel, ['start', 'plus_time'], ['asc', 'asc']);
+  // เรียงตามเวลาที่เสร็จเร็วสุด
   sel = _.orderBy(sel, ['end'], ['asc']);
   console.log('sel', JSON.stringify(sel));
   console.log('-----------------');
@@ -266,17 +279,19 @@ async function selectChief(task, start, temp) {
   }
 
   let selected = sel[0];
+  // ถ้าเวลาเริ่มที่เลือกให้ < เวลาที่ต้องการเริ่ม ให้เริ่มจากเวลาที่ต้องการเริ่ม
+  // ex. เริ่มได้ 12:32:00, ต้องการเริ่ม  12:34:00
   let selectedStart = selected.start < start.format(fullFormat) ? start.format(fullFormat) : selected.start;
   let sres = {
     ...selected,
     user_id: selected.user_id,
     start: selectedStart,
   };
-  // console.log('sres', sres);
   return sres;
 }
 
 async function getStartTimeByCheckAvailableStation(stationId, needStart) {
+  // กรณีต้อง check work station พวกยำวุ้นเส้น, จัดจานเฟรนฟราย
   if (stationId == null) {
     return datetime.moment(needStart).add(1, 'minutes');
   }
@@ -289,9 +304,12 @@ async function getStartTimeByCheckAvailableStation(stationId, needStart) {
     return datetime.moment(needStart).add(1, 'minutes');
   }
 
+  // ได้ข้อมูล work station นั้น
   let stationInfo = resWork[0];
 
   // check max capacity
+  // ดูว่าเวลาที่เราต้องการใช้มีคนใช้อยู่รึป่าว ?
+  // ดูจาก รายการอาหารที่ทำ เวลาที่ใช้ work station นั้นเสร็จ เวลา expected_end > เวลาที่จะใช้
   let sqlu = SELECT_USED_WORK_STATION;
   sqlu = sqlu.replace('$work_station_id', stationId);
   sqlu = sqlu.replace('$expected_end_at', needStart.format(fullFormat));
@@ -299,10 +317,13 @@ async function getStartTimeByCheckAvailableStation(stationId, needStart) {
   let used = res.length;
   let qty = stationInfo.qty;
   // console.log('used < qty', used < qty);
+
+  // คนใช้น้อยกว่า max capacity, สามารถใช้ได้เลย
   if (used < qty) {
     return datetime.moment(needStart).add(1, 'minutes');
   }
 
+  // ถ้า capcity เต็ม จะใช้เวลาที่เสร็จของ station นั้น เป็นเวลาเริ่ม
   return datetime.moment(res[0].expected_end_at).add(1, 'minutes');
 }
 
@@ -468,6 +489,7 @@ async function findOrderItemGroup(orderItems) {
 
 async function checkExtraTask(items) {
   // check time close
+  // เช็คเวลาก่อนร้านปิด ไม่ต้อง reorder
   let now = moment().format(fullFormat);
   let close = moment().format(`YYYY-MM-DD ${CONF_CLOSE_TIME}`);
   if (now > close) {
@@ -481,6 +503,8 @@ async function checkExtraTask(items) {
     return result;
   }
   let stringIds = arrayIds.join(',');
+
+  // หา extra task ของแต่ละ menu
   let sql = SELECT_EXTRA_MENU_BY_MAIN_MENU;
   sql = sql.replace('$main_menu_id', stringIds);
   sql = sql.replace('$created_at', moment().format('YYYY-MM-DD'));
@@ -495,12 +519,18 @@ async function checkExtraTask(items) {
 
     for (let j = 0; j < hasExtra.length; j++) {
       let extra = hasExtra[j];
-      let totalRemain = (+extra.remaining || 0) + (+extra.qty_cooking || 0) - item.qty;
+
+      // extra.remaining = (จำนวนที่แม่ครัวทำ + (-จำนวนที่ใช้ไปในแต่ละ order) + (จำนวนที่กำลังทำอยู่ + จำนวนที่กำลังทำแล้ว)) ในวันนั้น <-- sum จาก sql
+      // จาก ตาราง extra menu item
+      // item.qty = จำนวนที่สั่งเข้ามา
+      // จำนวนคงเหลือ =  
+      let totalRemain = (+extra.remaining || 0) - item.qty;
       if (extra.reorder_point == null) {
         continue;
       }
 
       if (totalRemain <= extra.reorder_point) {
+        // generate extra task
         result.push({
           menu_id: extra.menu_id,
           qty: extra.default_reorder_qty,

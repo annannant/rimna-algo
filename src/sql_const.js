@@ -36,8 +36,7 @@ from order_items as item
 LEFT JOIN tasks as t on t.task_id = item.task_id
 LEFT JOIN menu as m on m.menu_id = t.menu_id
 LEFT JOIN work_stations as w on w.work_station_id = t.work_station_id 
-WHERE item.status = 'queue' 
-AND t.work_station_id = $work_station_id 
+WHERE t.work_station_id = $work_station_id 
 AND (expected_end_at > '$expected_end_at')
 ORDER BY expected_end_at ASC`
 
@@ -61,12 +60,6 @@ WHERE main_order_item_id IN ($main_order_item_id)
 export const SELECT_EXTRA_MENU_BY_MAIN_MENU = `SELECT e.*, m.*, m.name as menu_name, 
 (SELECT sum(qty) from extra_menu_items WHERE menu_id = e.extra_menu_id
 AND DATE(created_at) = DATE('$created_at')) as remaining,
-
-(SELECT sum(qty) from order_items as item
-LEFT JOIN tasks as t on t.task_id = item.task_id
-WHERE t.menu_id = e.extra_menu_id
-AND item.status IN ('cook', 'queue')
-AND DATE(expected_end_at) = DATE('$created_at')) as qty_cooking
 
 from menu_with_extra as e
 LEFT JOIN menu as m on m.menu_id = e.extra_menu_id
