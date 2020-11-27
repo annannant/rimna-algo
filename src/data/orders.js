@@ -1,6 +1,6 @@
 export const items = [
-  // { menu_id: 14, menu_name: "ยำวุ้นเส้น",qty: 1,   },
-  // { menu_id: 16, menu_name: "ปีกไก่ทอด",qty: 2,   }, 
+  { menu_id: 14, menu_name: "ยำวุ้นเส้น",qty: 1,   },
+  { menu_id: 16, menu_name: "ปีกไก่ทอด",qty: 2,   }, 
   { menu_id: 18, menu_name: "เฟรนฟราย",qty: 2,   }, 
   { menu_id: 1, menu_name: "ข้าวหมูย่างน้ำจิ้มแจ่ว",qty: 1, }, 
 

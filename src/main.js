@@ -10,11 +10,11 @@ import {
   SELECT_MENU_MAIN_TASKS,
   SELECT_LAST_ORDER_NUMBER,
   INSERT_ORDER_ITEMS,
+  INSERT_CHILD_ORDER_ITEMS,
   SELECT_LAST_QUEUE_NUMBER,
   SELECT_USED_WORK_STATION,
-  INSERT_ORDER_ITEM_GROUP,
   SELECT_ITEM_IN_QUEUE,
-  SELECT_ITEM_GROUP_BY_MAIN,
+  SELECT_PARALLEL_ITEM_BY_MAIN,
   SELECT_EXTRA_MENU_BY_MAIN_MENU,
 } from './sql_const';
 import { datetime } from './utils/time';
@@ -22,6 +22,20 @@ import { datetime } from './utils/time';
 let CONF_PLUS_EXTRA_TIME = 2;
 let CONF_CLOSE_TIME = '17:00:00';
 let fullFormat = 'YYYY-MM-DD HH:mm:ss';
+
+// CONF
+const PARALLEL_TYPE_MAIN = 1;
+const PARALLEL_TYPE_PARALLEL = 2;
+
+const TASK_TYPE_COOK = 1;
+const TASK_TYPE_FRIE = 2;
+const TASK_TYPE_DERESS = 3;
+const TASK_TYPE_GRILL = 4;
+
+const ITEM_STATUS_QUEUE = 1;
+const ITEM_STATUS_COOK = 2;
+const ITEM_STATUS_FINISHED = 3;
+const ITEM_STATUS_CANCELLED = 4;
 
 async function start(orders) {
   let data = await cal(orders);
@@ -34,6 +48,7 @@ async function start(orders) {
     queue++;
   }
   // let ins = await insertOrder(data);
+  console.log('data', JSON.stringify(data));
 }
 
 async function cal(orders) {
@@ -42,10 +57,10 @@ async function cal(orders) {
   // ไว้สำหรับเก็บรายการ ที่ calcualte แล้ว
   // ดึงรายการออเดอร์ที่อยู่ในคิว
   let temp = await getOrderItemInQueue();
+  // console.log('tasks', JSON.stringify(temp));
 
   // ตรวจสอบ ว่าแต่ละ menu มี extra task และต้อง reorder point หรือไม่?
   let extraTask = await checkExtraTask(orders);
-// console.log('extraTask', extraTask);
   orders = orders.concat(extraTask);
 
   // ดึงขอมูล task ของรายการที่สั่งเข้ามา
@@ -90,8 +105,9 @@ async function cal(orders) {
         expected_end_at: endTime.format(fullFormat),
         menu_id: task.menu_id,
         qty: task.qty,
-        user_id: chief.user_id,
+        worker_id: chief.worker_id,
         task_type: task.task_type,
+        parallel_type: task.parallel_type,
         // debug var
         menu_name: task.menu_name,
         cooking_time: task.cooking_time,
@@ -116,8 +132,9 @@ async function cal(orders) {
           expected_end_at: subTaskEnd.format(fullFormat),
           menu_id: sTask.menu_id,
           qty: task.qty,
-          user_id: chief.user_id,
+          worker_id: chief.worker_id,
           task_type: sTask.task_type,
+          parallel_type: task.parallel_type,
           // debug var
           menu_name: sTask.menu_name,
           cooking_time: sTask.cooking_time,
@@ -137,8 +154,9 @@ async function cal(orders) {
             expected_end_at: chief.end,
             menu_id: task.menu_id,
             qty: task.qty,
-            user_id: tempItem.user_id,
+            worker_id: tempItem.worker_id,
             task_type: task.task_type,
+            parallel_type: task.parallel_type,
             // debug var
             menu_name: task.menu_name,
             cooking_time: task.cooking_time,
@@ -164,13 +182,13 @@ async function selectChief(task, start, temp) {
     // find all chief's task
 
     // filter เฉพาะงานของ แม่ครัวคนนั้น
-    let chiefTasks = allTasks.filter((r) => r.user_id == chief.user_id);
+    let chiefTasks = allTasks.filter((r) => r.worker_id == chief.worker_id);
     // no task in hand
     // ถ้าเค้าว่าง
     if (chiefTasks.length == 0) {
       // TODO return this chief;
       return {
-        user_id: chief.user_id,
+        worker_id: chief.worker_id,
         start: start.format(fullFormat),
       };
       // continue;
@@ -184,7 +202,7 @@ async function selectChief(task, start, temp) {
       let ctask = new moment(current.expected_end_at).add(1, 'minutes');
 
       // สามารถทำพร้อมฉันได้นะ ฉันเป็นของทอดหรือย่าง - provide start time
-      if (['fries', 'grill'].includes(current.task_type)) {
+      if (current.parallel_type == PARALLEL_TYPE_MAIN && task.parallel_type == PARALLEL_TYPE_PARALLEL) {
         // มี task อื่นที่ทำพร้อมอยู่
         if ((current.children || []).length > 0) {
           // วนลูป task ที่ทำพร้อมกันอยู่ ว่ามี gap ว่างมั้ย 
@@ -203,7 +221,7 @@ async function selectChief(task, start, temp) {
               vacant.push({
                 ref_id: current.ref_id,
                 plus_time: CONF_PLUS_EXTRA_TIME,
-                user_id: chief.user_id,
+                worker_id: chief.worker_id,
                 start: childCtask.format(fullFormat),
                 duration: c_duration.minutes(),
               });
@@ -216,7 +234,7 @@ async function selectChief(task, start, temp) {
           vacant.push({
             ref_id: current.ref_id,
             plus_time: CONF_PLUS_EXTRA_TIME,
-            user_id: chief.user_id,
+            worker_id: chief.worker_id,
             start: cTaskStart.format(fullFormat),
             duration: 100000,
           });
@@ -227,7 +245,7 @@ async function selectChief(task, start, temp) {
         if (noNextTask) {
           // เวลาเริ่ม = เวลาสิ้นสุดของ task นี้
           vacant.push({
-            user_id: chief.user_id,
+            worker_id: chief.worker_id,
             start: ctask.format(fullFormat),
             duration: 100000,
           });
@@ -244,7 +262,7 @@ async function selectChief(task, start, temp) {
         if (duration > 1) {
           let dstart = moment(current.expected_end_at).add(1, 'minutes').format(fullFormat);
           vacant.push({
-            user_id: chief.user_id,
+            worker_id: chief.worker_id,
             start: dstart,
             duration: duration.minutes(),
           });
@@ -273,7 +291,7 @@ async function selectChief(task, start, temp) {
   console.log('-----------------');
   if (sel.length == 0) {
     return {
-      user_id: chiefs[0].user_id,
+      worker_id: chiefs[0].worker_id,
       start: start.format(fullFormat),
     };
   }
@@ -284,7 +302,7 @@ async function selectChief(task, start, temp) {
   let selectedStart = selected.start < start.format(fullFormat) ? start.format(fullFormat) : selected.start;
   let sres = {
     ...selected,
-    user_id: selected.user_id,
+    worker_id: selected.worker_id,
     start: selectedStart,
   };
   return sres;
@@ -328,7 +346,7 @@ async function getStartTimeByCheckAvailableStation(stationId, needStart) {
 }
 
 async function totalChief() {
-  let sql = 'SELECT * FROM users WHERE user_type = "chief"';
+  let sql = 'SELECT * FROM workers WHERE worker_type = "chief"';
   let results = await db.query(sql);
   // for(let i = 0; i < results.length; i++) {
   //   console.log('results', results[i].name);
@@ -354,9 +372,9 @@ async function getMenuInfoMainTask(orders) {
   }
 
   // find priority type
-  let fries = items.filter((r) => r.task_type == 'fries');
+  let fries = items.filter((r) => r.task_type == TASK_TYPE_FRIE);
   fries = _.orderBy(fries, ['cooking_time'], ['asc']);
-  let other = items.filter((r) => r.task_type != 'fries');
+  let other = items.filter((r) => r.task_type != TASK_TYPE_FRIE);
   items = fries.concat(other);
   // console.log('res', JSON.stringify(res));
   return items;
@@ -410,10 +428,10 @@ async function insertOrder(orders) {
     if (order.order_item_id == undefined) {
       let sql_items = INSERT_ORDER_ITEMS;
       sql_items = sql_items.replace('$queue_number', order.queue_number);
-      sql_items = sql_items.replace('$status', 'queue');
+      sql_items = sql_items.replace('$status', ITEM_STATUS_QUEUE);
       sql_items = sql_items.replace('$expected_start_at', order.expected_start_at);
       sql_items = sql_items.replace('$expected_end_at', order.expected_end_at);
-      sql_items = sql_items.replace('$user_id', order.user_id);
+      sql_items = sql_items.replace('$worker_id', order.worker_id);
       sql_items = sql_items.replace('$task_id', order.task_id);
       sql_items = sql_items.replace('$qty', order.qty);
       sql_items = sql_items.replace('$order_id', orderId);
@@ -426,29 +444,23 @@ async function insertOrder(orders) {
 
     for (let j = 0; j < (order.children || []).length; j++) {
       let child = order.children[j];
-      if (child.main_order_item_id != undefined && child.sub_order_item_id != undefined) {
+      if (child.parallel_parent_id != undefined) {
         continue;
       }
 
-      let sql_child_item = INSERT_ORDER_ITEMS;
+      let sql_child_item = INSERT_CHILD_ORDER_ITEMS;
       sql_child_item = sql_child_item.replace('$queue_number', order.queue_number);
-      sql_child_item = sql_child_item.replace('$status', 'queue');
+      sql_child_item = sql_child_item.replace('$status', ITEM_STATUS_QUEUE);
       sql_child_item = sql_child_item.replace('$expected_start_at', child.expected_start_at);
       sql_child_item = sql_child_item.replace('$expected_end_at', child.expected_end_at);
-      sql_child_item = sql_child_item.replace('$user_id', child.user_id);
+      sql_child_item = sql_child_item.replace('$worker_id', child.worker_id);
       sql_child_item = sql_child_item.replace('$task_id', child.task_id);
       sql_child_item = sql_child_item.replace('$qty', child.qty);
       sql_child_item = sql_child_item.replace('$order_id', orderId);
+      sql_child_item = sql_child_item.replace('$parallel_parent_id', orderItemId);
       let resInsChildItem = await db.query(sql_child_item);
-
-      // insert group
-      let sql_ins_group = INSERT_ORDER_ITEM_GROUP;
-      sql_ins_group = sql_ins_group.replace('$main_order_item_id', orderItemId);
-      sql_ins_group = sql_ins_group.replace('$sub_order_item_id', resInsChildItem.insertId);
-      await db.query(sql_ins_group);
     }
   }
-  // console.log('orderId', JSON.stringify(orders));
 }
 
 async function getLastQueue() {
@@ -463,24 +475,25 @@ async function getOrderItemInQueue() {
   if (res.length == 0) {
     return [];
   }
+  
   // find child
-  res = await findOrderItemGroup(res);
+  res = await findParallelOrderItem(res);
   // res = res.concat(temp);
   return res;
 }
 
-async function findOrderItemGroup(orderItems) {
+async function findParallelOrderItem(orderItems) {
   let arrayIds = orderItems.map((t) => t.order_item_id);
   if (arrayIds.length == 0) {
     return orderItems;
   }
   let stringIds = arrayIds.join(',');
-  let sql = SELECT_ITEM_GROUP_BY_MAIN;
-  sql = sql.replace('$main_order_item_id', stringIds);
+  let sql = SELECT_PARALLEL_ITEM_BY_MAIN;
+  sql = sql.replace('$parallel_parent_id', stringIds);
   let res = await db.query(sql);
 
   for (let j = 0; j < orderItems.length; j++) {
-    let children = res.filter((r) => r.main_order_item_id == orderItems[j].order_item_id) || [];
+    let children = res.filter((r) => r.parallel_parent_id == orderItems[j].order_item_id) || [];
     orderItems[j].children = children;
   }
   return orderItems;
@@ -508,6 +521,7 @@ async function checkExtraTask(items) {
   let sql = SELECT_EXTRA_MENU_BY_MAIN_MENU;
   sql = sql.replace('$main_menu_id', stringIds);
   sql = sql.replace('$created_at', moment().format('YYYY-MM-DD'));
+  // console.log('sql', sql);
   let res = await db.query(sql);
 
   for (let i = 0; i < items.length; i++) {
