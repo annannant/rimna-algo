@@ -11,12 +11,13 @@ where m.menu_id in ($menu_id)
 AND t.sequence = 1`;
 // order by cooking_time asc, t.menu_id asc, t.sequence asc
 
-export const SELECT_MENU_SUB_TASKS = `SELECT m.*, m.menu_name as menu_name, t.task_id, t.task_type as task_type, t.cooking_time, t.menu_id, t.work_station_id, t.sequence
+export const SELECT_MENU_SUB_TASKS = `SELECT m.*, m.menu_name as menu_name, t.task_id, t.task_type as task_type, t.cooking_time, t.menu_id, t.work_station_id, t.sequence, t.parallel_type
 FROM menu as m
 LEFT JOIN tasks as t ON t.menu_id = m.menu_id 
 where m.menu_id in ($v)
 AND t.sequence > 1
 order by cooking_time asc, t.menu_id asc, t.sequence asc`
+
 
 // export const order items
 export const INSERT_ORDER_ITEMS = `INSERT INTO rimna_db.order_items 
@@ -52,14 +53,14 @@ WHERE t.work_station_id = $work_station_id
 AND (expected_end_at > '$expected_end_at')
 ORDER BY expected_end_at ASC`
 
-export const SELECT_ITEM_IN_QUEUE = `SELECT item.*, m.menu_name as menu_name, t.*, t.task_type as task_type, item.order_item_id as ref_id  
+export const SELECT_ITEM_IN_QUEUE = `SELECT item.*, m.menu_name as menu_name, t.*, t.task_type as task_type,
+item.order_item_id as ref_id
 from order_items as item
 LEFT JOIN tasks as t on t.task_id = item.task_id
 LEFT JOIN menu as m on m.menu_id = t.menu_id
-WHERE  item.status = ${ITEM_STATUS_QUEUE}`;
+WHERE parallel_parent_id is NULL AND item.status = ${ITEM_STATUS_QUEUE}`;
 
-
-export const SELECT_PARALLEL_ITEM_BY_MAIN = `SELECT item.*, t.*, t.task_type as task_type, m.menu_name as menu_name, 
+export const SELECT_PARALLEL_ITEM_BY_MAIN = `SELECT item.*, t.*, t.task_type as task_type, m.menu_name as menu_name,
 item.order_item_id as ref_id
 FROM order_items as item
 LEFT JOIN tasks as t on t.task_id = item.task_id
@@ -75,3 +76,7 @@ from main_menu_with_extra_menu as e
 LEFT JOIN menu as m on m.menu_id = e.extra_menu_id
 WHERE e.main_menu_id IN ($main_menu_id)
 `
+
+export const INSERT_EXTRA_MENU_ITEMS = `INSERT INTO rimna_db.extra_menu_items 
+(menu_id, order_item_id, qty, source, created_at) VALUES 
+('$menu_id', '$order_item_id', '$qty', '$source', '$created_at');`;
