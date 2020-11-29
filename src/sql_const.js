@@ -4,11 +4,13 @@ const ITEM_STATUS_COOK = 2;
 const ITEM_STATUS_FINISHED = 3;
 const ITEM_STATUS_CANCELLED = 4;
 
+const FIRST_SEQ = 1;
+
 export const SELECT_MENU_MAIN_TASKS = `SELECT m.*, t.task_id, t.task_type as task_type, t.cooking_time, t.menu_id, t.work_station_id, t.sequence, t.parallel_type
 FROM tasks as t 
 LEFT JOIN menu as m ON t.menu_id = m.menu_id 
 where m.menu_id in ($menu_id)
-AND t.sequence = 1`;
+AND t.sequence = ${FIRST_SEQ}`;
 // order by cooking_time asc, t.menu_id asc, t.sequence asc
 
 export const SELECT_MENU_SUB_TASKS = `SELECT m.*, m.menu_name as menu_name, t.task_id, t.task_type as task_type, t.cooking_time, t.menu_id, t.work_station_id, t.sequence, t.parallel_type
@@ -80,3 +82,14 @@ WHERE e.main_menu_id IN ($main_menu_id)
 export const INSERT_EXTRA_MENU_ITEMS = `INSERT INTO rimna_db.extra_menu_items 
 (menu_id, order_item_id, qty, source, created_at) VALUES 
 ('$menu_id', '$order_item_id', '$qty', '$source', '$created_at');`;
+
+
+export const SELECT_CAN_GROUP_IN_QUEUE_BY_TASK_ID = `SELECT m.menu_name, item.queue_number, sum(qty) as q  ,m.max_cooking_same_time as ms,  item.worker_id,
+(m.max_cooking_same_time - sum(qty)) as vacant, item.task_id
+FROM order_items as item
+LEFT JOIN tasks as t on t.task_id = item.task_id
+LEFT JOIN menu as m on m.menu_id = t.menu_id
+WHERE t.sequence = ${FIRST_SEQ} 
+AND item.status = ${ITEM_STATUS_QUEUE}
+AND item.task_id IN ($task_id)
+GROUP BY queue_number, t.task_id, item.worker_id;`;

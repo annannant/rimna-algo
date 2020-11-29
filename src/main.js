@@ -1,6 +1,6 @@
 import moment from 'moment';
 import express from 'express';
-import _, { ceil } from 'lodash';
+import _, { ceil, result } from 'lodash';
 
 import db from './utils/db';
 import './data/menu';
@@ -17,6 +17,7 @@ import {
   SELECT_ITEM_IN_QUEUE,
   SELECT_PARALLEL_ITEM_BY_MAIN,
   SELECT_EXTRA_MENU_BY_MAIN_MENU,
+  SELECT_CAN_GROUP_IN_QUEUE_BY_TASK_ID,
 } from './sql_const';
 import { datetime } from './utils/time';
 
@@ -49,12 +50,15 @@ async function start(orders) {
   let lastQueue = await getLastQueue();
   let queue = lastQueue;
   for (let i = 0; i < data.length; i++) {
+    if (data[i].queue_number != undefined) {
+      continue;
+    }
     data[i].queue_number = queue;
     queue++;
   }
 
   debugData(data);
-  // let ins = await insertOrder(data);
+  let ins = await insertOrder(data);
 }
 
 async function cal(orders) {
@@ -63,7 +67,8 @@ async function cal(orders) {
 
   // ไว้สำหรับเก็บรายการ ที่ calcualte แล้ว
   // ดึงรายการออเดอร์ที่อยู่ในคิว
-  let temp = await getOrderItemInQueue();
+  let temp = await getExistingOrderItemInQueue();
+
   // let temp = [];
   // ตรวจสอบ ว่าแต่ละ menu มี extra task และต้อง reorder point หรือไม่?
   let extraTask = await checkExtraTask(orders);
@@ -72,11 +77,15 @@ async function cal(orders) {
   // ดึงขอมูล task ของรายการที่สั่งเข้ามา
   // max_cooking, cooking_time, work_station_id เฉพาะ main task - sequence 1
   let tasks = await getMenuInfoMainTask(orders);
+  // console.log('tasks', JSON.stringify(tasks));
+
+  // can group with order in queue
+  tasks = await canGroupWithOrderInQueue(tasks);
 
   // เช็คจำนวนที่สามารถทำพร้อมกันได้สูงสุง & splt qty
   tasks = await splitFromMaxCooking(tasks);
   // console.log('tasks', JSON.stringify(tasks));
-  
+
   // สร้าง ref if สำหรับ item ที่ยังไม่มี order_item_id
   // ใช้สำหรับ reference ให้รายการที่สามารถทำพร้อมกันได้
   // for (let i = 0; i < tasks.length; i++) {
@@ -84,22 +93,26 @@ async function cal(orders) {
   //   ref_id++;
   // }
 
-  // วน add item 
+  // วน add item
   let refId = 1;
   for (let i = 0; i < tasks.length; i++) {
     let task = tasks[i];
 
+    if (task.is_group_in_queue != undefined) {
+      temp.push({
+        ...task,
+      });
+      continue;
+    }
+
     let needStart = orderDate;
     // check work station
-    let available = await getStartTimeByCheckAvailableStation(
-      task.work_station_id, 
-      needStart
-    );
+    let available = await getStartTimeByCheckAvailableStation(task.work_station_id, needStart);
     // "2020-11-25T08:29:47.417Z"
     // --> res = time to start task after check work station
 
     let taskStart = available;
-    
+
     // หาแม่ครัวที่ทำงานเสร็จเร็วที่สุด เพื่อลองคำนวณเวลา
     // หารายการ gap ที่แม่ครัวว่าง ดูจากเวลาสิ้นสุดของแต่ละ task และเวลาเริ่มต้นของ task ถัดไป
     let chief = await selectChief(task, taskStart, temp);
@@ -133,7 +146,7 @@ async function cal(orders) {
       // เช่น จัดจานเฟรนฟราย, จัดจานไก่ทอด
       let subTasks = await getSubTask(task.menu_id);
 
-       // เวลาที่เสร็จของ task หลัก
+      // เวลาที่เสร็จของ task หลัก
       let lastTime = endTime;
       for (let s = 0; s < subTasks.length; s++) {
         let sTask = subTasks[s];
@@ -224,13 +237,13 @@ async function selectChief(task, start, temp) {
         // console.log('current', current.menu_name, current.task_type, current.parallel_type, task.parallel_type);
         // มี task อื่นที่ทำพร้อมอยู่
         if ((current.children || []).length > 0) {
-          // วนลูป task ที่ทำพร้อมกันอยู่ ว่ามี gap ว่างมั้ย 
+          // วนลูป task ที่ทำพร้อมกันอยู่ ว่ามี gap ว่างมั้ย
           for (let c = 0; c < current.children.length; c++) {
             let child = current.children[c];
             let childCtask = new moment(child.expected_end_at).add(1, 'minutes');
             if (childCtask.format(fullFormat) < start.format(fullFormat)) {
               childCtask = start;
-            }              
+            }
             let noNextChild = c + 1 == current.children.length;
             if (noNextChild) {
               // ใช้เวลาที่สิ้นสุดของตัวลูก เป็น start
@@ -246,7 +259,7 @@ async function selectChief(task, start, temp) {
                 worker_id: chief.worker_id,
                 start: childCtask.format(fullFormat),
                 duration: c_duration.minutes(),
-                flag: "A",
+                flag: 'A',
               });
               continue;
             }
@@ -268,10 +281,11 @@ async function selectChief(task, start, temp) {
               start: mainStart.format(fullFormat),
               // duration: mDuration.minutes(),
               duration: 10000,
-              flag: "B",
+              flag: 'B',
             });
           }
         }
+        
       } else {
         // เวลา ถัดไป แบบว่าง ๆ ไม่มี task อื่นมาคั่น
         let noNextTask = j + 1 == chiefTasks.length;
@@ -285,7 +299,7 @@ async function selectChief(task, start, temp) {
             plus_time: 0,
             start: ctask.format(fullFormat),
             duration: 100000,
-            flag: "C",
+            flag: 'C',
           });
           continue;
         }
@@ -302,7 +316,7 @@ async function selectChief(task, start, temp) {
             plus_time: 0,
             start: ctask.format(fullFormat),
             duration: duration.minutes(),
-            flag: "D",
+            flag: 'D',
           });
         }
       }
@@ -311,7 +325,7 @@ async function selectChief(task, start, temp) {
 
   // console.log('vacant', JSON.stringify(vacant));
   // console.log('-----------------', start.format(fullFormat));
-  
+
   // prepare เวลาสิ้นสุด = เอาเวลาเริ่ม + cooking time + (extra_time) ถ้ามี
   let sel = vacant
     .filter((v) => v.duration >= task.cooking_time + (v.plus_time || 0))
@@ -327,7 +341,7 @@ async function selectChief(task, start, temp) {
   sel = _.orderBy(sel, ['end', 'plus_time'], ['asc', 'asc']);
   console.log('sel', JSON.stringify(sel));
   console.log('-----------------', task.menu_name);
-  
+
   if (sel.length == 0) {
     return {
       worker_id: chiefs[0].worker_id,
@@ -387,7 +401,7 @@ async function getStartTimeByCheckAvailableStation(stationId, needStart) {
 }
 
 async function totalChief() {
-  let sql = 'SELECT * FROM workers WHERE worker_type = "chief"';
+  let sql = 'SELECT * FROM workers WHERE worker_type = "chief" AND work_status = "present"';
   let results = await db.query(sql);
   // for(let i = 0; i < results.length; i++) {
   //   console.log('results', results[i].name);
@@ -461,9 +475,14 @@ async function insertOrder(orders) {
   let resIns = await db.query(sql);
   let orderId = resIns.insertId;
 
+  // insert with group
+  let canGroups = orders.filter((o) => o.is_group_in_queue == true);
+  await insertItemCanGroup(orderId, canGroups);
+
   // get last queue
-  for (let i = 0; i < orders.length; i++) {
-    let order = orders[i];
+  let items = orders.filter((o) => !o.is_group_in_queue);
+  for (let i = 0; i < items.length; i++) {
+    let order = items[i];
     // insert items
     let orderItemId;
     if (order.order_item_id == undefined) {
@@ -520,13 +539,13 @@ async function getLastQueue() {
   return queue;
 }
 
-async function getOrderItemInQueue() {
+async function getExistingOrderItemInQueue() {
   let sql = SELECT_ITEM_IN_QUEUE;
   let res = await db.query(sql);
   if (res.length == 0) {
     return [];
   }
-  
+
   // find child
   res = await findParallelOrderItem(res);
   // res = res.concat(temp);
@@ -549,7 +568,6 @@ async function findParallelOrderItem(orderItems) {
   }
   return orderItems;
 }
-
 
 async function checkExtraTask(items) {
   // check time close
@@ -588,7 +606,7 @@ async function checkExtraTask(items) {
       // extra.remaining = (จำนวนที่แม่ครัวทำ + (-จำนวนที่ใช้ไปในแต่ละ order) + (จำนวนที่กำลังทำอยู่ + จำนวนที่กำลังทำแล้ว)) ในวันนั้น <-- sum จาก sql
       // จาก ตาราง extra menu item
       // item.qty = จำนวนที่สั่งเข้ามา
-      // จำนวนคงเหลือ =  
+      // จำนวนคงเหลือ =
       let totalRemain = (+extra.remaining || 0) - item.qty;
       if (extra.reorder_point == null) {
         continue;
@@ -620,16 +638,16 @@ async function insertExtraMenuItem(orderItemId, menuInfo) {
 }
 
 async function debugData(data) {
-  // 
-  let res = data.map(d => {
+  //
+  let res = data.map((d) => {
     d.expected_start_at = moment(d.expected_start_at).format(fullFormat);
     d.expected_end_at = moment(d.expected_end_at).format(fullFormat);
-    d.children = (d.children || []).map(c => {
+    d.children = (d.children || []).map((c) => {
       c.expected_start_at = moment(c.expected_start_at).format(fullFormat);
       c.expected_end_at = moment(c.expected_end_at).format(fullFormat);
       return c;
     });
-    d.children = _.orderBy(d.children, ['expected_start_at'], ['asc'])
+    d.children = _.orderBy(d.children, ['expected_start_at'], ['asc']);
     return d;
   });
 
@@ -639,36 +657,108 @@ async function debugData(data) {
   res = _.orderBy(res, ['expected_start_at'], ['asc']);
   let chief = await totalChief();
   //
-  for(let j = 0; j < res.length; j++) {
-    let info = res[j]
+  for (let j = 0; j < res.length; j++) {
+    let info = res[j];
     let str = '';
-    for(let c = 0; c < chief.length; c++) {
+    for (let c = 0; c < chief.length; c++) {
       let ch = chief[c];
       str += ',';
       if (info.worker_id == ch.worker_id) {
         str += `${info.menu_name},`;
       }
     }
-    console.log(moment(info.expected_start_at).format(minFormat), ',',moment(info.expected_end_at).format(minFormat), ',', str);
+    console.log(moment(info.expected_start_at).format(minFormat), ',', moment(info.expected_end_at).format(minFormat), ',', str);
 
-    // 
-    for(let k = 0; k < (info.children || []).length; k++) {
+    //
+    for (let k = 0; k < (info.children || []).length; k++) {
       let child = info.children[k];
       let cstr = '';
-      for(let o = 0; o < chief.length; o++) {
+      for (let o = 0; o < chief.length; o++) {
         let cch = chief[o];
         cstr += ',';
         if (child.worker_id == cch.worker_id) {
           cstr += `${child.menu_name},`;
         }
       }
-      console.log(moment(child.expected_start_at).format(minFormat), ',',moment(child.expected_end_at).format(minFormat), ',', cstr);
+      console.log(moment(child.expected_start_at).format(minFormat), ',', moment(child.expected_end_at).format(minFormat), ',', cstr);
     }
   }
 }
 
+export async function canGroupWithOrderInQueue(tasks) {
+  //
+  let taskIds = tasks.map((o) => o.task_id);
+  let sql = SELECT_CAN_GROUP_IN_QUEUE_BY_TASK_ID;
+  sql = sql.replace('$task_id', taskIds.join(','));
+  let res = await db.query(sql);
+  res = res.filter((r) => r.vacant > 0);
+
+  let results = [];
+  for (let i = 0; i < tasks.length; i++) {
+    let task = tasks[i];
+
+    let vacants = res.filter((r) => r.task_id == task.task_id);
+    // ไม่มี capacity ว่าง
+    if (vacants.length == 0) {
+      results.push(task);
+      continue;
+    }
+
+    let remainQty = task.qty;
+    for (let j = 0; j < vacants.length; j++) {
+      let info = vacants[j];
+      if (remainQty == 0) {
+        continue;
+      }
+
+      let used;
+      if (info.vacant - remainQty > 0) {
+        used = remainQty;
+      } else {
+        used = info.vacant;
+      }
+
+      results.push({
+        ...task,
+        is_group_in_queue: true,
+        worker_id: info.worker_id,
+        queue_number: info.queue_number,
+        qty: used,
+      });
+      remainQty -= used;
+    }
+    if (remainQty > 0) {
+      results.push({
+        ...task,
+        qty: remainQty,
+      });
+    }
+  }
+
+  return results;
+}
+
+export async function insertItemCanGroup(orderId, items) {
+  // console.log('orderIds', orderIds);
+  // console.log('items', items);
+  // main info
+  let mainIds = items.map((o) => o.queue_number);
+  let sql = `SELECT * from order_items  WHERE queue_number in (${mainIds.join(',')}) ORDER BY order_item_id`;
+  let mainRes = await db.query(sql);
+  for (let j = 0; j < items.length; j++) {
+    let item = items[j];
+    let mainInfo = mainRes.find((m) => (m.queue_number = item.queue_number));
+
+    let sql_items = INSERT_ORDER_ITEMS;
+    sql_items = sql_items.replace('$queue_number', mainInfo.queue_number);
+    sql_items = sql_items.replace('$status', ITEM_STATUS_QUEUE);
+    sql_items = sql_items.replace('$expected_start_at', moment(mainInfo.expected_start_at).format(fullFormat));
+    sql_items = sql_items.replace('$expected_end_at', moment(mainInfo.expected_end_at).format(fullFormat));
+    sql_items = sql_items.replace('$worker_id', mainInfo.worker_id);
+    sql_items = sql_items.replace('$task_id', item.task_id);
+    sql_items = sql_items.replace('$qty', item.qty);
+    sql_items = sql_items.replace('$order_id', orderId);
+    await db.query(sql_items);
+  }
+}
 start(items);
-
-
-
-
